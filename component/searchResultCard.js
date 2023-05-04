@@ -16,7 +16,7 @@ const GET_MATCHED_SENTENCES_URL = 'http://localhost:4000/getMatchedSentences';
 class SearchResultCard extends Component {
   state = {
     sectionID: this.props.sectionID,
-    matchedString: this.props.matchedString,
+    searchString: this.props.searchString,
     sectionTags: [],
     sectionPages: [],
     matchedSentences: []
@@ -67,7 +67,7 @@ class SearchResultCard extends Component {
    * * http://localhost:4000/getMatchedSentences
    * @dataSendToServer
    * * sectionID: number
-   * * matchedString: String
+   * * searchString: String
    * @dataGetFromServer
    * * matchedSentences: [string]
    */
@@ -76,7 +76,7 @@ class SearchResultCard extends Component {
     axios
       .post(GET_MATCHED_SENTENCES_URL, {
         sectionID: that.state.sectionID,
-        matchedString: that.state.matchedString
+        searchString: that.state.searchString
       })
       .then(function (response) {
         console.log(response.data);
@@ -91,10 +91,22 @@ class SearchResultCard extends Component {
       });
   };
 
-  /**
-   * @description:
-   * * Route to section content page and display the screenshot of the pages in the section
-   */
+  // * Return a red or black color based on whether the word is matched
+  getColor = (word) => {
+    const wordList = this.state.searchString.toLowerCase().split(" ");
+    // For each word in searchString
+    for(let i = 0; i < wordList.length; i++) {
+      // If the word is matched, return red
+      if(word.toLowerCase().includes(wordList[i])) {
+        return 'red';
+      }
+    }
+    // If the word is not matched, return black
+    return 'black';
+  };
+
+
+  // * Route to section content page and display the screenshot of the pages in the section
   viewSectionContent = () => {
     // Pass data to section content page and redirect to it
     Router.push({
@@ -102,6 +114,24 @@ class SearchResultCard extends Component {
       query: { sectionID: this.state.sectionID, sectionPages: this.state.sectionPages }
     });
   };
+
+  // * Render matched sentences, the matched word will be highlighted
+  renderMatchedSentences = () => {
+    return(
+      <div>
+        {this.state.matchedSentences.map((sentence) => {
+          return(
+            <div>
+              {sentence.split(" ").map(word => {
+                return <span style={{ color: this.getColor(word) }}>{`${word} `}</span>;
+              })}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
 
   render() {
     return(
@@ -121,7 +151,7 @@ class SearchResultCard extends Component {
         <Card.Content extra>
           <Card.Description>
             <p>Matched Sentence: </p>
-            {this.state.matchedSentences}
+            {this.renderMatchedSentences()}
           </Card.Description>
         </Card.Content>
         <Card.Content extra>
@@ -133,7 +163,7 @@ class SearchResultCard extends Component {
           })}
         </Card.Content>
         <Card.Content extra>
-          <a onClick={this.viewSectionContent}>
+          <a onClick={this.viewSectionContent} style={{color: "blue"}}>
             View Section Content
           </a>
         </Card.Content>

@@ -25,10 +25,10 @@
       "static/chunks/main.js",
       "static/chunks/pages/_error.js"
     ],
-    "/sectionContent": [
+    "/searchResults": [
       "static/chunks/webpack.js",
       "static/chunks/main.js",
-      "static/chunks/pages/sectionContent.js"
+      "static/chunks/pages/searchResults.js"
     ]
   },
   "ampFirstPages": []

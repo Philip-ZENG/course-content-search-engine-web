@@ -2,8 +2,8 @@
  * @description:
  * * This is the server that handles search requests
  * * Receive search key word from client and return search result to client
+ * * Algorithm here is: inverse document frequency (IDF) + importance weighted distance based relevance score
 */
-
 
 // * ############### Set Up Express Server ###############
 const express = require("express");
@@ -19,6 +19,7 @@ app.use(bodyParser.json());
 
 // * ############### Connect to MongoDB Database ###############
 const mongoose = require('mongoose');
+const mathjs = require('mathjs');
 mongoose.connect("mongodb://127.0.0.1:27017/courseDB");
 
 const tagSchema = new mongoose.Schema ({
@@ -102,7 +103,7 @@ async function findSections(pages, occurrenceWeight, sectionMap, tagMap) {
 
 // ! ############### Compute Relevance Score ###############
 
-// * Step 3: Given the tagIDCountMap, determine the tagIDs that has the top `decisiveTagNumber` of highest count value
+// * Step 1: Given the tagIDCountMap, determine the tagIDs that has the top `decisiveTagNumber` of highest count value
 //  * return a new Map object that contains the top `decisiveTagNumber` of tagIDs (key) and their count value (value)
 function findDecisiveTag(tagMap, decisiveTagNumber) {
   // Convert the Map to an array of key-value pairs and sort by count value in descending order
@@ -112,7 +113,7 @@ function findDecisiveTag(tagMap, decisiveTagNumber) {
   return decisiveMap;
 };
 
-// * Step 4: Given the decisiveMap, find section IDs that contain these tags
+// * Step 2: Given the decisiveMap, find section IDs that contain these tags
 //  * return an array of sectionIDs
 async function findRelevantSections(decisiveMap) {
   // Create an array to store the sectionID that contains the tags
@@ -133,7 +134,116 @@ async function findRelevantSections(decisiveMap) {
   return sectionIDArray;
 };
 
-// * Step 5-1: Calculate shortest distance between tags using Dijkstra's algorithm
+// * Step 3: Calculate importance score of each tag
+// * Step 3-1: compute the first matrix, H matrix in Google PageRank algorithm
+async function get_H_Matrix(){
+  // get all tags
+  const allTags = await Tag.find();
+  // get the number of tags
+  const numTags = allTags.length;
+  // initialize the H matrix
+  const H = new Array(numTags);
+  for (let i = 0; i < numTags; i++){
+    H[i] = new Array(numTags);
+    for (let j = 0; j < numTags; j++){
+      H[i][j] = 0;
+    }
+  }
+
+  // fill the H matrix
+  for (let i = 0; i < numTags; i++){
+    const neighbors = allTags[i].neighbors;
+    const numNeighbors = neighbors.length;
+    for (let j = 0; j < numNeighbors; j++){
+      const neighborID = neighbors[j];
+      // tagID starts from 1, but array index starts from 0
+      H[i][neighborID-1] = 1 / numNeighbors;
+    };
+  };
+  return mathjs.matrix(H);
+};
+
+// * Step 3-2: compute the second matrix, H bar matrix in Google PageRank algorithm
+async function get_H_bar_Matrix(H){
+  // since our tag graph is a undirected graph, so there is no dangling nodes (node with no out edges)
+  // so we can just use the H matrix as the H bar matrix
+  return H;
+};
+
+// * Step 3-3: compute the third matrix, Google Matrix in Google PageRank algorithm
+async function get_Google_Matrix(H_bar, theta){
+  const dimensions = H_bar._size;
+  const numTags = dimensions[0];
+  const oneMatrix = mathjs.ones(dimensions);
+  const randomizationMatrix = mathjs.multiply(oneMatrix, (1-theta)*(1/numTags));
+  const H_barTimesTheta = mathjs.multiply(H_bar, theta);
+  const GoogleMatrix = mathjs.add(randomizationMatrix, H_barTimesTheta);
+  return GoogleMatrix;
+};
+
+// * Step 3-4: compute the PageRank vector iteratively
+async function get_PageRank_Vector(GoogleMatrix, epsilon){
+  // initialize the PageRank vector
+  const dimensions = GoogleMatrix._size;
+  const numTags = dimensions[0];
+  var PageRankVector = mathjs.ones(numTags);
+  // Initialize the PageRank vector to be a vector of 1/numTags
+  PageRankVector = mathjs.multiply(PageRankVector, 1/numTags);
+  // initialize the previous PageRank vector
+  var previousPageRankVector = mathjs.zeros(numTags);
+  // initialize the difference between the current PageRank vector and the previous PageRank vector
+  var difference = mathjs.subtract(PageRankVector, previousPageRankVector);
+
+  // initialize the number of iterations
+  var numIterations = 0;
+  // iterate until the difference is smaller than epsilon
+  while (mathjs.norm(difference) > epsilon){
+    // update the previous PageRank vector
+    previousPageRankVector = PageRankVector;
+    // update the current PageRank vector
+    PageRankVector = mathjs.multiply(PageRankVector, GoogleMatrix);
+    // update the difference
+    difference = mathjs.subtract(PageRankVector, previousPageRankVector);
+    // update the number of iterations
+    numIterations++;
+  };
+
+  console.log("Number of iterations: " + numIterations);
+
+  return PageRankVector;
+};
+
+// * Step 3-5: compute the importance score of each tag
+async function calculateTagImportanceScore(){
+  const H = await get_H_Matrix();
+  // console.log(H);
+
+  const H_bar = await get_H_bar_Matrix(H);
+  // console.log(H_bar);
+
+  const GoogleMatrix = await get_Google_Matrix(H_bar, 0.85);
+  // console.log(GoogleMatrix);
+
+  const PageRankVector = await get_PageRank_Vector(GoogleMatrix, 0.0001);
+  console.log(PageRankVector);
+
+  // the importance score vector (pageRank vector) is small, so we may need to scale it up
+  // const scaledPageRankVector = mathjs.multiply(PageRankVector, 2);
+  // console.log(scaledPageRankVector);
+
+  // convert the pageRank vector to a map
+  const tagCount = await Tag.countDocuments();
+  var tagIDArray = Array.from({ length: tagCount }, (value, index) => index + 1);
+  var tagImportanceScoreMap = new Map();
+  for (let i = 0; i < tagCount; i++){
+    tagImportanceScoreMap.set(tagIDArray[i], PageRankVector._data[i]);
+  };
+
+  return tagImportanceScoreMap;
+};
+
+
+// * Step 4: Calculate shortest distance between tags using Dijkstra's algorithm
 // Use Dijkstra's algorithm to calculate the shortest distance between two tags, return the distance
 // All the tags are represented by its tag ID
 // ! If the cost of each edge is not a constant number, the edge cost should be stored in the database
@@ -175,7 +285,7 @@ async function Dijkstra(tagIDArray, startTagID){
     // If minDistance is Infinity, and miniDistanceTagID is 0, it means there is no path to reach the rest of the tags 
     // (No any other connected nodes); Return the results
     if(minDistance == Infinity && minDistanceTagID == 0){
-      // console.log("No path to reach the rest of the tags");
+      console.log("No path to reach the rest of the tags");
       return {Distance, LeastCostPath};
     };
 
@@ -183,7 +293,7 @@ async function Dijkstra(tagIDArray, startTagID){
     LeastCostPath.push(minDistanceTagID);
     // Update the distance of the neighbors of the tag with the minimum distance
     const minDistanceTag = await Tag.find({tagID: minDistanceTagID});
-    // console.log(minDistanceTag);
+    console.log(minDistanceTag);
     // Get ID of all neighbors of the tag with the minimum distance
     const minDistanceTagNeighborsID = minDistanceTag[0].neighbors;
     for (var i = 0; i < tagIDArray.length; i++){
@@ -205,7 +315,9 @@ async function Dijkstra(tagIDArray, startTagID){
   return {Distance, LeastCostPath};
 };
 
-// * Step 5-2: Calculate the relevance score of each section
+// * Step 5: Calculate the importance score weighted relevance score of each section
+// TODO: Modify this to use importance score as weight to calculate relevance score
+
 async function calculateRelevanceScore(sectionIDArray, decisiveMap){
   // Prepare for Dijkstra algorithm
   const tagCount = await Tag.countDocuments();
@@ -218,6 +330,8 @@ async function calculateRelevanceScore(sectionIDArray, decisiveMap){
 
   // Create a Map to store the sectionID (key) and the relevance score (value)
   var sectionRelevanceScoreMap = new Map();
+
+  const tagImportanceScoreMap = await calculateTagImportanceScore();
   
   // ! This works even when multiple decisive tag is used
   // Iterate trough decisiveTagIDArray
@@ -227,7 +341,7 @@ async function calculateRelevanceScore(sectionIDArray, decisiveMap){
     const decisiveTagID = decisiveTagIDArray[k];
     const returns = await Dijkstra(tagIDArray, decisiveTagID);
     const DistanceMap = returns.Distance;
-    // console.log("Distance from tag ", decisiveTagID, " to other tags: ", DistanceMap);
+    console.log("Distance from tag ", decisiveTagID, " to other tags: ", DistanceMap);
     
     // Iterate through the sectionIDArray
     for (let i = 0; i < sectionIDArray.length; i++){
@@ -238,9 +352,12 @@ async function calculateRelevanceScore(sectionIDArray, decisiveMap){
       const tagIDs = section[0].tagIDs;
   
       // Calculate the relevance score
+      // The relevance score is the sum of the inverse of the distance between the tag and the decisive tag
+      // * Use importance score as weight to calculate relevance score
+      // ! Notice: If some tag is not reachable from the decisive tag, the distance between them is Infinity; 1/(Infinity+1) = 0
       let relevanceScore = 0;
       for (let j = 0; j < tagIDs.length; j++){
-        relevanceScore += 1/(DistanceMap.get(tagIDs[j])+1);
+        relevanceScore += 10 * tagImportanceScoreMap.get(tagIDs[j]) * 1/(DistanceMap.get(tagIDs[j])+1);
       };
 
       // For a decisive map with more than 1 tag (key), we need to assign each tag's influence such that it is proportional to the weighted frequecy of the tag
@@ -263,7 +380,7 @@ async function calculateRelevanceScore(sectionIDArray, decisiveMap){
 
 
 // ! ############### User Feedback Mechanism & RankScore Calculation ###############
-// * Step 6-1: Update the feedback score of each section
+// * Step 1: Update the feedback score of each section
 async function updateFeedbackScore(sectionID, isHelpful){
   var result = await Section.find({sectionID: sectionID}).select({feedbackScore:1, _id:0});
   var feedbackScore = result[0].feedbackScore;
@@ -290,7 +407,7 @@ async function generateRandomFeedback(sectionRelevanceScoreMap, numOfFeedback) {
   };
 };
 
-// * Step 6-2: Calculate the rank score of each section, rank score = relevance score + feedback score
+// * Step 2: Calculate the rank score of each section, rank score = relevance score + feedback score
 async function calculateRankScore(sectionRelevanceScoreMap){
   // Create a Map to store the sectionID (key) and the rank score (value)
   var sectionRankScoreMap = new Map();
@@ -315,8 +432,36 @@ async function calculateRankScore(sectionRelevanceScoreMap){
   return sectionRankScoreMap;
 };
 
+// ! ############### Use Inverse Term Frequency to Adjust Rank Score ###############
+// * Step 7: Calculate the inverse document frequency of a search string word
+async function calculateLogCount(searchString) {
+  // define a set to record the pages that contains the search string
+  const visitedPages = new Set();
+  // define the counter
+  let count = 0;
+  // define a set that has all the pages
+  const pages = await Page.find({});
+
+  // iterate through all the pages
+  for (let i = 0; i < pages.length; i++) {
+    const page = pages[i];
+    // check if this page has already been visited
+    if (visitedPages.has(page.pageID)) {
+      continue;
+    }
+    // seach the string in this page
+    if (page.content.includes(searchString)) {
+      count++;
+      visitedPages.add(page.pageID);
+    }
+  }
+
+  // return the lnx number
+  return Math.log(count/pages.length);
+}
+
 // ! ############### Rank Sections based on RankScore ###############
-// * Step 7: Sort the sections by rank score in descending order
+// * Step 8: Sort the sections by rank score in descending order
 async function sortSections(sectionRankScoreMap){
   // Create an array to store the sectionID
   var rankedSectionIDArray = Array.from(sectionRankScoreMap.keys());
@@ -327,42 +472,64 @@ async function sortSections(sectionRankScoreMap){
 
 
 // * Main integrated search function
-async function search(searchKeyWord) {
-  // ! #### Map Search Word to Decisive Tags #####
-  const pages = await findPages(searchKeyWord);
-  // console.log("contentMappedPages: ");
-  // console.log(pages.contentMappedPages);
-  // console.log("titleMappedPages: ");
-  // console.log(pages.titleMappedPages);
-
+async function search(searchString) {
+  var wordsList=searchString.split(' ');
   // Create a Map to store the sectionID (key) and the count of the number of pages that are in the section (value)
   var sectionMap = new Map();
   // Create a Map to store the tagName (key) and the the occurrence frequency of such tag (value)
   var tagMap = new Map();
-  var returns = await findSections(pages.contentMappedPages, 1, sectionMap, tagMap);
-  returns = await findSections(pages.titleMappedPages, 2, returns.sectionMap, returns.tagMap);
-  const sectionIDFrequencyMap = returns.sectionMap;
-  const tagIDFrequencyMap = returns.tagMap;
+  // Final rank score map of all words in input string
+  var listRankScorMap = new Map();
 
-  // ! #### Compute Relevance Score ####
-  // console.log("sectionIDFrequencyMap: ", sectionIDFrequencyMap);
-  // console.log("tagIDFrequencyMap: ", tagIDFrequencyMap);
+  for (var word of wordsList) {
+    // ! #### Map Search Word to Decisive Tags #####
+    const pages = await findPages(word);
+    var returns = await findSections(pages.contentMappedPages, 1, sectionMap, tagMap);
+    returns = await findSections(pages.titleMappedPages, 2, returns.sectionMap, returns.tagMap);
+    const sectionIDFrequencyMap = returns.sectionMap;
+    const tagIDFrequencyMap = returns.tagMap;
 
-  const decisiveMap = findDecisiveTag(tagIDFrequencyMap,3);
-  // console.log("decisiveMap: ", decisiveMap);
+    // ! #### Compute Relevance Score ####
+    // console.log("sectionIDFrequencyMap: ", sectionIDFrequencyMap);
+    // console.log("tagIDFrequencyMap: ", tagIDFrequencyMap);
 
-  const sectionIDArray = await findRelevantSections(decisiveMap);
-  // console.log("sectionIDArray: ", sectionIDArray);
+    const decisiveMap = findDecisiveTag(tagIDFrequencyMap,3);
+    // console.log("decisiveMap: ", decisiveMap);
 
-  const sectionRelevanceScoreMap = await calculateRelevanceScore(sectionIDArray, decisiveMap);
-  // console.log("sectionRelevanceScoreMap: ", sectionRelevanceScoreMap);
+    const sectionIDArray = await findRelevantSections(decisiveMap);
+    // console.log("sectionIDArray: ", sectionIDArray);
 
-  // ! #### User Feedback Mechanism & RankScore Calculation ####
-  const rankScoreMap = await calculateRankScore(sectionRelevanceScoreMap);
-  // console.log("rankScore: ", rankScoreMap);
+    const sectionRelevanceScoreMap = await calculateRelevanceScore(sectionIDArray, decisiveMap);
+    // console.log("sectionRelevanceScoreMap: ", sectionRelevanceScoreMap);
+
+    // ! #### User Feedback Mechanism & RankScore Calculation ####
+    const rankScoreMap = await calculateRankScore(sectionRelevanceScoreMap);
+    // console.log("rankScore: ", rankScoreMap);
+
+    // ! #### Calculate Inverse Document Frequency ####
+    var inverseCount = await calculateLogCount(word);
+    for (let [key,value] of rankScoreMap) {
+      value *= inverseCount;
+      rankScoreMap.set(key,value);
+    }
+
+    for (let [key,value] of rankScoreMap) {
+      if (listRankScorMap.has(key)) {
+        value+=listRankScorMap.get(key);
+        listRankScorMap.set(key,value);
+      }
+      else {
+        listRankScorMap.set(key,value);
+      }
+    }
+
+    sectionMap.clear();
+    tagMap.clear();
+  }
+
 
   // ! #### Rank Sections based on RankScore ####
-  const rankedSectionIDArray = await sortSections(rankScoreMap);
+  const rankedSectionIDArray = await sortSections(listRankScorMap);
   // console.log("rankedSectionIDArray: ", rankedSectionIDArray);
 
   return rankedSectionIDArray;
@@ -375,6 +542,7 @@ async function getSectionInfo(sectionID) {
 };
 
 // * get matched content from database given the matched string and sectionID
+//  TODO: handle the condition when the matched string has multiple words
 async function getMatchedSentences(sectionID, matchedString) {
   // Find the section with the given sectionID
   const section = await Section.findOne({sectionID: sectionID});
@@ -382,21 +550,25 @@ async function getMatchedSentences(sectionID, matchedString) {
   const content = section.content;
   // Find the matched sentences
   const matchedSentences = [];
+  const wordList = matchedString.split(" ");
 
-  for (let i=0; i<content.length; i++) {
-    const titleString = content[i].title.toLowerCase();
-    if (titleString.includes(matchedString.toLowerCase())) {
-      matchedSentences.push(content[i].title);
-    };
-
-    const contentString = content[i].content.toLowerCase();
-    const contentStringArray = contentString.split("}");
-    for (let j=0; j<contentStringArray.length; j++) {
-      if (contentStringArray[j].includes(matchedString.toLowerCase())) {
-        const sentence = contentStringArray[j].split("{")[1];
-        matchedSentences.push(sentence);
+  // for each word in the matched string, find the sentences that contain the word
+  for (let k=0; k<wordList.length; k++) {
+    for (let i=0; i<content.length; i++) {
+      const titleString = content[i].title.toLowerCase();
+      if (titleString.includes(wordList[k].toLowerCase())) {
+        matchedSentences.push(content[i].title);
       };
-    }
+
+      const contentString = content[i].content.toLowerCase();
+      const contentStringArray = contentString.split("}");
+      for (let j=0; j<contentStringArray.length; j++) {
+        if (contentStringArray[j].includes(wordList[k].toLowerCase())) {
+          const sentence = contentStringArray[j].split("{")[1];
+          matchedSentences.push(sentence);
+        };
+      }
+    };
   };
 
   return matchedSentences;
@@ -472,18 +644,18 @@ app.post('/getSectionInfo', function(req,res) {
  * * getMatchedSentences
  * @dataGetFromClient
  * * sectionID: number
- * * matchedString: String
+ * * searchString: String
  * @dataSendToClient
  * * matchedSentences: [string]
  */
 app.post('/getMatchedSentences', function(req,res) {
-  // get sectionID and matchedString from client
+  // get sectionID and searchString from client
   console.log(">>> Received get matched sentences request");
   console.log("Section ID: ", req.body.sectionID);
-  console.log("Matched String: ", req.body.matchedString);
+  console.log("Matched String: ", req.body.searchString);
 
   // retrieve matched sentences from database
-  getMatchedSentences(req.body.sectionID, req.body.matchedString)
+  getMatchedSentences(req.body.sectionID, req.body.searchString)
     .then(function(result){
       console.log("Matched Sentences: ", result);
       // return matched sentences to client

@@ -42,7 +42,7 @@ class SearchResultPage extends Component {
     } catch (error) {
       return (
         <Container style={{textAlign: 'center'}} >
-          <SearchResultCard sectionID={this.state.rankedSectionIDArray} matchedString={this.state.searchKeyWord}/>
+          <SearchResultCard sectionID={this.state.rankedSectionIDArray} searchString={this.state.searchKeyWord}/>
         </Container>
       );
     }
@@ -51,7 +51,7 @@ class SearchResultPage extends Component {
     return this.state.rankedSectionIDArray.map((sectionID) => {
       return (
         <Container style={{textAlign: 'center', width: '700px', margin: '30px 50px 30px 50px'}}>
-          <SearchResultCard sectionID={sectionID} matchedString={this.state.searchKeyWord}/>
+          <SearchResultCard sectionID={sectionID} searchString={this.state.searchKeyWord}/>
         </Container>
       );
     });
