@@ -457,7 +457,7 @@ async function calculateLogCount(searchString) {
   }
 
   // return the lnx number
-  return Math.log(count/pages.length);
+  return Math.log(pages.length/count);
 }
 
 // ! ############### Rank Sections based on RankScore ###############
