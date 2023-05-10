@@ -1,9 +1,5 @@
 {
-  "pages": {
-    "/sectionContent": [],
-    "/": [],
-    "/searchResults": []
-  },
+  "pages": {},
   "app": {},
   "appUsingSizeAdjust": false,
   "pagesUsingSizeAdjust": false
