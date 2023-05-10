@@ -55,6 +55,22 @@ Set up an website to provide an interface to interact with the search engine and
     node searchServer.js
     ```
 
-    
 
-  
+### 0x03 Implementation
+
+- Database
+  - MongoDB: A non-sql database used to store and query data
+- Back-end
+  - Node.JS modules:
+    - Mongoose: MongoDB interface to JavaScript code
+    - Mathjs: Math operations (especially matrix operations)
+    - Express.JS: For communication between back-end and front-end
+- Front-end
+  - Node.JS modules:
+    - Next: Upgraded react structure (include routing function)
+    - semantic-ui-react: UI component library
+    - react-redux: Cross component data transmission
+    - Axios: For communication between front-end and back-end
+
+
+
